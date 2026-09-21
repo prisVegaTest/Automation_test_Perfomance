@@ -20,13 +20,19 @@ function parseCsv(csvText) {
   });
 }
 
-// Cargar y parametrizar los datos del CSV usando SharedArray para optimizar memoria
+function parseJsonSafe(response) {
+  try {
+    return response.json();
+  } catch (error) {
+    return null;
+  }
+}
+
 const usersData = new SharedArray("users", function () {
   return parseCsv(open("./users.csv"));
 });
 
 export const options = {
-  // Configuración de escenario para garantizar al menos 20 TPS de throughput sostenido
   scenarios: {
     login_load_test: {
       executor: "ramping-arrival-rate",
@@ -35,27 +41,21 @@ export const options = {
       preAllocatedVUs: 20,
       maxVUs: 50,
       stages: [
-        { duration: "30s", target: 20 }, // Ramp-up hasta 20 TPS
-        { duration: "3m", target: 20 }, // Mantenimiento a 20 TPS sostenidos
-        { duration: "30s", target: 0 }, // Ramp-down
+        { duration: "30s", target: 20 },
+        { duration: "3m", target: 20 },
+        { duration: "30s", target: 0 },
       ],
     },
   },
-  // Definición de Criterios de Aceptación (SLA)
   thresholds: {
-    // 1. Tiempo de respuesta máximo de 1.5s (p95 o p99 según rigurosidad)
     http_req_duration: ["p(95)<1500", "max<2000"],
-    // 2. Tasa de error aceptable menor al 3% del total de peticiones
     http_req_failed: ["rate<0.03"],
-    // 3. Chequeo funcional de respuestas exitosas
     checks: ["rate>0.97"],
   },
 };
 
 export default function () {
-  // Selección aleatoria o secuencial de credenciales
   const user = usersData[Math.floor(Math.random() * usersData.length)];
-
   const url = "https://fakestoreapi.com/auth/login";
   const payload = JSON.stringify({
     username: user.user,
@@ -70,19 +70,13 @@ export default function () {
   };
 
   const res = http.post(url, payload, params);
+  const body = parseJsonSafe(res);
+  const hasToken = !!body && typeof body.token === "string" && body.token.length > 0;
 
-  // Validaciones del SLA y código de respuesta
   check(res, {
     "status is 200": (r) => r.status === 200,
     "response time < 1.5s": (r) => r.timings.duration <= 1500,
-    "has token": (r) => {
-      try {
-        const body = r.json();
-        return !!body && typeof body.token === "string" && body.token.length > 0;
-      } catch (error) {
-        return false;
-      }
-    },
+    "has token": () => hasToken,
   });
 
   sleep(1);
